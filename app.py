@@ -36,13 +36,13 @@ def saaty_consistency_check(matrix):
     if n <= 2:
         if n == 1:
             return True, 0.0, np.array([1.0]), None
-        eigenvalues, eigenvectors = np.linalg.eig(matrix)
-        weights = np.abs(np.real(eigenvectors[:, np.argmax(np.real(eigenvalues))]))
-        weights = weights / np.sum(weights)
-        return True, 0.0, weights, None
+        eigenvals, eigenvecs = np.linalg.eig(matrix)
+        w = np.abs(np.real(eigenvecs[:, np.argmax(np.real(eigenvals))]))
+        w = w / np.sum(w)
+        return True, 0.0, w, None
 
     eigenvalues, eigenvectors = np.linalg.eig(matrix)
-    max_eigenval = np.max(np.real(eigenvalues))
+    max_eigenval = float(np.max(np.real(eigenvalues)))
 
     weights = np.abs(np.real(eigenvectors[:, np.argmax(np.real(eigenvalues))]))
     weights = weights / np.sum(weights)
@@ -59,10 +59,11 @@ def saaty_consistency_check(matrix):
     problem_pair = None
     if not is_consistent:
         ideal_matrix = np.outer(weights, 1 / weights)
-        error_matrix = matrix * (1 / ideal_matrix)
+        # Исправлено: берём максимум из отношения, чтобы учитывать заниженные оценки так же, как и завышенные
+        error_matrix = np.maximum(matrix / ideal_matrix, ideal_matrix / matrix)
         error_matrix[np.tril_indices(n)] = 0
         i_idx, j_idx = np.unravel_index(np.argmax(error_matrix), error_matrix.shape)
-        problem_pair = (i_idx, j_idx)
+        problem_pair = (int(i_idx), int(j_idx))
 
     return is_consistent, cr, weights, problem_pair
 
@@ -75,16 +76,16 @@ def build_comparison_ui(factors, prefix):
         st.info(f"В группе '{factors[0]}' только один фактор. Сравнение не требуется.")
         return matrix
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            st.markdown(f"**{factors[i]}** vs **{factors[j]}**")
+    for r in range(n):
+        for c in range(r + 1, n):
+            st.markdown(f"**{factors[r]}** vs **{factors[c]}**")
             col1, col2 = st.columns([1, 2])
 
             with col1:
                 choice = st.radio(
                     "Какой фактор важнее?",
-                    [factors[i], factors[j], "Равны"],
-                    key=f"{prefix}_radio_{i}_{j}",
+                    [factors[r], factors[c], "Равны"],
+                    key=f"{prefix}_radio_{r}_{c}",
                     horizontal=False
                 )
 
@@ -92,7 +93,7 @@ def build_comparison_ui(factors, prefix):
                 score = st.slider(
                     "Степень превосходства (2-9)",
                     min_value=2, max_value=9, value=3,
-                    key=f"{prefix}_score_{i}_{j}",
+                    key=f"{prefix}_score_{r}_{c}",
                     disabled=(choice == "Равны")
                 )
                 if choice != "Равны":
@@ -101,13 +102,13 @@ def build_comparison_ui(factors, prefix):
                     st.caption("Факторы равнозначны")
 
             val = 1.0
-            if choice == factors[i]:
+            if choice == factors[r]:
                 val = float(score)
-            elif choice == factors[j]:
+            elif choice == factors[c]:
                 val = 1.0 / float(score)
 
-            matrix[i, j] = val
-            matrix[j, i] = 1.0 / val
+            matrix[r, c] = val
+            matrix[c, r] = 1.0 / val
             st.write("---")
 
     return matrix
@@ -121,8 +122,8 @@ def analyze_matrix(matrix, factors, group_name):
     else:
         st.error(f"[{group_name}] Матрица противоречива (ОС = {cr:.3f} > 0.10).")
         if problem_pair is not None:
-            i, j = problem_pair
-            st.warning(f"Рекомендуется пересмотреть оценку в паре: **{factors[i]}** и **{factors[j]}**.")
+            p_i, p_j = problem_pair
+            st.warning(f"Рекомендуется пересмотреть оценку в паре: **{factors[p_i]}** и **{factors[p_j]}**.")
 
     return is_consistent, weights
 
@@ -149,7 +150,6 @@ st.markdown("### Шаг 3. Анализ и расчет весов")
 
 if st.button("Проверить согласованность и рассчитать результат", type="primary"):
     all_consistent = True
-    results = {}
 
     # Анализ главных критериев
     st.subheader("Проверка уровня 1")
@@ -162,8 +162,8 @@ if st.button("Проверить согласованность и рассчи�
     sub_weights = {}
     for main_crit in MAIN_CRITERIA:
         sub_factors = HIERARCHY[main_crit]
-        is_consist, weights = analyze_matrix(matrices[main_crit], sub_factors, main_crit)
-        sub_weights[main_crit] = weights
+        is_consist, w_sub = analyze_matrix(matrices[main_crit], sub_factors, main_crit)
+        sub_weights[main_crit] = w_sub
         if not is_consist:
             all_consistent = False
 
@@ -175,12 +175,12 @@ if st.button("Проверить согласованность и рассчи�
         for i, main_crit in enumerate(MAIN_CRITERIA):
             w_main = main_weights[i]
             for j, sub_factor in enumerate(HIERARCHY[main_crit]):
-                w_sub = sub_weights[main_crit][j]
-                global_weight = w_main * w_sub
+                w_factor = sub_weights[main_crit][j]
+                global_weight = w_main * w_factor
                 global_results.append({
                     "Группа": main_crit,
                     "Фактор": sub_factor,
-                    "Локальный вес": round(w_sub, 4),
+                    "Локальный вес": round(w_factor, 4),
                     "Глобальный вес": round(global_weight, 4)
                 })
 
