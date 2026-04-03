@@ -136,8 +136,73 @@ def analyze_matrix(matrix, factors, group_name):
     return is_consistent, weights
 
 
+def apply_defaults_from_csv(csv_path):
+    try:
+        df_defaults = pd.read_csv(csv_path)
+    except Exception as exc:
+        return False, f"Не удалось прочитать CSV: {exc}"
+
+    if "Тип строки" not in df_defaults.columns:
+        return False, "В CSV нет колонки 'Тип строки'."
+
+    answer_rows = df_defaults[df_defaults["Тип строки"] == "Ответ"]
+    if answer_rows.empty:
+        return False, "В CSV нет строк типа 'Ответ'."
+
+    group_to_config = {"Главные критерии": (MAIN_CRITERIA, "main")}
+    for idx, main_crit in enumerate(MAIN_CRITERIA):
+        group_to_config[main_crit] = (HIERARCHY[main_crit], f"sub_{idx}")
+
+    applied_count = 0
+    for _, row in answer_rows.iterrows():
+        group_name = str(row.get("Группа", "")).strip()
+        factor_a = str(row.get("Фактор A", "")).strip()
+        factor_b = str(row.get("Фактор B", "")).strip()
+        choice = str(row.get("Выбор", "")).strip()
+
+        if group_name not in group_to_config:
+            continue
+
+        factors, prefix = group_to_config[group_name]
+        if factor_a not in factors or factor_b not in factors or factor_a == factor_b:
+            continue
+
+        idx_a = factors.index(factor_a)
+        idx_b = factors.index(factor_b)
+        r, c = (idx_a, idx_b) if idx_a < idx_b else (idx_b, idx_a)
+
+        radio_key = f"{prefix}_radio_{r}_{c}"
+        score_key = f"{prefix}_score_{r}_{c}"
+
+        if choice in (factors[r], factors[c], "Равны"):
+            st.session_state[radio_key] = choice
+
+        score_raw = row.get("Оценка Саати", 3)
+        if pd.notna(score_raw):
+            try:
+                score_value = int(float(score_raw))
+                score_value = max(2, min(9, score_value))
+                st.session_state[score_key] = score_value
+            except (TypeError, ValueError):
+                pass
+
+        applied_count += 1
+
+    if applied_count == 0:
+        return False, "Не удалось сопоставить строки CSV с парами факторов в форме."
+
+    return True, f"Подставлено значений из CSV: {applied_count}."
+
+
 st.set_page_config(page_title="Оценка факторов (МАИ)", layout="wide")
 st.title("Многоуровневая оценка по методу Саати")
+
+if st.button("Подставить значения из saaty_answers_and_weights.csv"):
+    ok, message = apply_defaults_from_csv("saaty_answers_and_weights.csv")
+    if ok:
+        st.success(message)
+    else:
+        st.error(message)
 
 # Сбор матриц
 matrices = {}
